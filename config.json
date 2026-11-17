@@ -1,0 +1,13 @@
+{
+  "saveRoot": "F:\\Scan\\whatsapp media",
+  "authDir": "auth",
+  "stateDb": "data/state.sqlite",
+  "timezone": "Asia/Hong_Kong",
+  "nearestTextMaxMessages": 15,
+  "nearestTextMaxMinutes": 30,
+  "maxConcurrentDownloads": 2,
+  "heartbeatPath": "data/heartbeat.json",
+  "heartbeatStaleMs": 120000,
+  "downloadRetryLimit": 5,
+  "mediaTypes": ["image", "video", "document"]
+}

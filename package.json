@@ -1,0 +1,35 @@
+{
+  "name": "whatsapp-media-saver",
+  "version": "1.0.0",
+  "description": "Local WhatsApp linked-device media saver (incoming images, videos, documents)",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "bin": {
+    "whatsapp-media-saver": "./src/index.js"
+  },
+  "main": "./src/index.js",
+  "scripts": {
+    "link": "node src/index.js link",
+    "start": "node src/index.js run",
+    "run": "node src/index.js run",
+    "health": "node src/index.js health",
+    "catchup": "node src/index.js catchup",
+    "test": "node --test test/**/*.test.js"
+  },
+  "keywords": [
+    "whatsapp",
+    "baileys",
+    "media",
+    "archive"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@hapi/boom": "^9.1.4",
+    "@whiskeysockets/baileys": "6.7.24",
+    "better-sqlite3": "^11.10.0",
+    "pino": "^9.6.0",
+    "qrcode-terminal": "^0.12.0"
+  }
+}
