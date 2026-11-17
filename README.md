@@ -13,7 +13,7 @@ Phone WhatsApp (and Desktop) stay usable as your primary session.
 ## Requirements
 
 - **Windows** always-on PC (boot/logon Task Scheduler)
-- **Node.js 20+** (`node -v`)
+- **Node.js 20.9+** (`node -v`) — `@whiskeysockets/baileys@6.7.22` (security floor). A `postinstall` patch rewrites Baileys’ JSON import attributes so **Node 20.9** works (unpatched Baileys 6.7.19+ needs Node 20.10+)
 - Disk path `F:\Scan\whatsapp media` (or override `SAVE_ROOT`)
 - WhatsApp phone with spare **Linked devices** slot
 

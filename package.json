@@ -4,13 +4,14 @@
   "description": "Local WhatsApp linked-device media saver (incoming images, videos, documents)",
   "type": "module",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=20.9.0"
   },
   "bin": {
     "whatsapp-media-saver": "./src/index.js"
   },
   "main": "./src/index.js",
   "scripts": {
+    "postinstall": "node scripts/patch-baileys-json-imports.mjs",
     "link": "node src/index.js link",
     "start": "node src/index.js run",
     "run": "node src/index.js run",
@@ -27,7 +28,7 @@
   "license": "MIT",
   "dependencies": {
     "@hapi/boom": "^9.1.4",
-    "@whiskeysockets/baileys": "6.7.24",
+    "@whiskeysockets/baileys": "6.7.22",
     "better-sqlite3": "^11.10.0",
     "pino": "^9.6.0",
     "qrcode-terminal": "^0.12.0"
