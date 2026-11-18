@@ -43,18 +43,45 @@ set SAVE_ROOT=F:\Scan\whatsapp media
 
 Or copy `config.example.json` → `config.local.json` and edit.
 
-## Link once (QR)
+## Link once (QR or pairing code)
+
+Do this on the **Windows PC**, not in the cloud.
+
+### QR (default)
+
+1. On the phone, open **WhatsApp → Settings → Linked devices → Link a device** *before* or as soon as the QR appears.
+2. In the app folder:
 
 ```bat
 npm run link
 ```
 
-1. A QR appears in the terminal.
-2. On the phone: **WhatsApp → Settings → Linked devices → Link a device** → scan.
-3. Confirm the new device appears in the linked list.
-4. Credentials persist under `auth\` — **do not commit or sync `auth\` to cloud shares.**
+3. A QR prints in the terminal **and** is written to `auth\qr.png` (open that PNG if the terminal QR is hard to scan).
+4. Scan the **latest** QR quickly. WhatsApp often closes with status **515** (restart required) during pairing — that is **normal**. The link process stays running, reconnects, and prints a **fresh** QR; scan the new one (ignore any earlier QR).
+5. Wait up to **10 minutes** (heartbeat logs every 30s). Only exit on success, true `loggedOut`, or Ctrl+C.
+6. Confirm the new device appears in Linked devices. Credentials persist under `auth\` — **do not commit or sync `auth\` to cloud shares.**
 
-Re-link only if you unlink the device or WhatsApp invalidates the session (`loggedOut`). Delete/quarantine `auth\` then run `npm run link` again.
+### Pairing code (if QR is awkward)
+
+Use digits with country code, **no** `+` or spaces (E.164):
+
+```bat
+npm run link -- --phone 85291234567
+```
+
+Or:
+
+```bat
+set WMS_PHONE=85291234567
+npm run link
+```
+
+Then on the phone: **Linked devices → Link with phone number** → enter the code printed in the console (and still wait through any 515 reconnect).
+
+### When to delete `auth\`
+
+- **Do not** delete `auth\` just because you saw 515 or a timeout mid-scan — clear only after a failed attempt if you want a clean slate, or when WhatsApp reports **`loggedOut`** / you unlinked the device.
+- Re-link after logout: delete or quarantine `auth\`, then run `npm run link` again.
 
 ## Start the daemon
 
@@ -68,13 +95,14 @@ Leaves a long-lived process open. Incoming media is downloaded as it arrives. Ev
 
 | Command | npm script | Purpose |
 | --- | --- | --- |
-| `link` | `npm run link` | QR pairing |
+| `link` | `npm run link` | QR / pairing-code link (10 min wait; reconnects on 515) |
 | `run` | `npm start` | Persistent saver daemon |
 | `health` | `npm run health` | Exit `0` if heartbeat fresh; else `1` |
 | `catchup` | `npm run catchup` | Report cursor + daemon heartbeat |
 
 ```bat
 node src\index.js help
+npm run link -- --phone 85291234567
 ```
 
 ## Always-on: Task Scheduler
@@ -188,7 +216,7 @@ whatsapp-media-saver/
 
 ## Verify on your PC
 
-1. `npm run link` → scan QR.
+1. `npm run link` → open Linked devices, scan the **latest** QR (or use `--phone`); if 515 appears, wait for the new QR.
 2. `npm start`.
 3. From another account (or a contact), send an image with a caption.
 4. Confirm `F:\Scan\whatsapp media\<timestamp_+phone>\<caption>.jpg` appears.
@@ -199,5 +227,20 @@ whatsapp-media-saver/
 1. Zip/copy `whatsapp-media-saver\` to the Windows PC (without `node_modules\` / `auth\` if any).
 2. `npm install`
 3. Ensure `F:\Scan\whatsapp media` exists (or set `SAVE_ROOT`).
-4. `npm run link` → scan on phone.
+4. `npm run link` → scan latest QR (or `npm run link -- --phone 852…`).
 5. `npm start` or register Task Scheduler via `scripts\register-tasks.ps1`.
+
+### Windows retry (if an older build timed out after 515)
+
+```bat
+cd C:\Apps\whatsapp-media-saver
+rmdir /s /q auth
+npm install
+npm run link
+```
+
+Scan within seconds of each **NEW** QR. Optional pairing code:
+
+```bat
+npm run link -- --phone 85291234567
+```
