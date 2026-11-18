@@ -1,11 +1,16 @@
 /**
  * Assemble caption + same-sender before/after texts for a saved media folder.
- * Window matches nearest-text: maxMessages (default 15) AND maxMinutes (default 30).
+ * Description window is independent of filename nearest-text:
+ *   default ±15 minutes, at most 5 texts before and 5 after (config.context*).
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { formatFolderTimestamp } from './naming.js';
+
+/** Default description context: 5 texts per side within ±15 minutes. */
+export const DEFAULT_CONTEXT_MAX_MESSAGES = 5;
+export const DEFAULT_CONTEXT_MAX_MINUTES = 15;
 
 /**
  * @typedef {{ text: string, ts: number, sender: string, chatId: string, messageId?: string|null }} TextEntry
@@ -28,7 +33,9 @@ import { formatFolderTimestamp } from './naming.js';
  *   lines: ContextLine[],
  *   mediaTs: number,
  *   chatId: string,
- *   sender: string
+ *   sender: string,
+ *   maxMessages: number,
+ *   maxMinutes: number
  * }} MediaContext
  */
 
@@ -60,7 +67,7 @@ export function dedupeTextEntries(entries) {
 }
 
 /**
- * Collect caption + before/after same-sender texts in the nearest-text window.
+ * Collect caption + before/after same-sender texts in the description window.
  *
  * @param {object} opts
  * @param {string|null|undefined} opts.caption
@@ -69,8 +76,8 @@ export function dedupeTextEntries(entries) {
  * @param {number} opts.mediaTs — unix seconds
  * @param {string|null|undefined} [opts.mediaMessageId] — exclude this msg from before/after
  * @param {TextEntry[]} opts.texts
- * @param {number} [opts.maxMessages=15]
- * @param {number} [opts.maxMinutes=30]
+ * @param {number} [opts.maxMessages=5] — cap per side (before and after)
+ * @param {number} [opts.maxMinutes=15] — ± minutes around mediaTs
  * @returns {MediaContext}
  */
 export function assembleMediaContext({
@@ -80,8 +87,8 @@ export function assembleMediaContext({
   mediaTs,
   mediaMessageId,
   texts,
-  maxMessages = 15,
-  maxMinutes = 30,
+  maxMessages = DEFAULT_CONTEXT_MAX_MESSAGES,
+  maxMinutes = DEFAULT_CONTEXT_MAX_MINUTES,
 }) {
   const cap = (caption || '').trim() || null;
   const maxSec = maxMinutes * 60;
@@ -130,6 +137,8 @@ export function assembleMediaContext({
     mediaTs,
     chatId,
     sender,
+    maxMessages,
+    maxMinutes,
   };
 }
 
@@ -141,6 +150,16 @@ export function assembleMediaContext({
 export function formatContextTimestamp(ts, timeZone = 'Asia/Hong_Kong') {
   // Reuse folder stamp shape: YYYY-MM-DD_HH-MM-SS
   return formatFolderTimestamp(ts, timeZone);
+}
+
+/**
+ * Human-readable window line for description.txt header.
+ * @param {{ maxMessages?: number, maxMinutes?: number }} [opts]
+ */
+export function formatContextWindowLabel(opts = {}) {
+  const maxMessages = opts.maxMessages ?? DEFAULT_CONTEXT_MAX_MESSAGES;
+  const maxMinutes = opts.maxMinutes ?? DEFAULT_CONTEXT_MAX_MINUTES;
+  return `Window: same sender · ±${maxMinutes} minutes · at most ${maxMessages} texts before & ${maxMessages} after`;
 }
 
 /**
@@ -159,7 +178,12 @@ export function formatDescriptionTxt(ctx, opts = {}) {
     `Media time: ${formatContextTimestamp(ctx.mediaTs, timeZone)}`,
   ];
   if (mediaFile) header.push(`Media file: ${mediaFile}`);
-  header.push('Window: same sender · 15 messages or 30 minutes · before & after');
+  header.push(
+    formatContextWindowLabel({
+      maxMessages: ctx.maxMessages,
+      maxMinutes: ctx.maxMinutes,
+    }),
+  );
   header.push('');
 
   if (!ctx.lines.length) {
@@ -188,6 +212,8 @@ export function buildMetaJson(ctx, extra = {}) {
     mediaFile: extra.mediaFile ?? null,
     mediaType: extra.mediaType ?? null,
     folderPath: extra.folderPath ?? null,
+    maxMessages: ctx.maxMessages,
+    maxMinutes: ctx.maxMinutes,
     before: ctx.before.map((t) => ({
       ts: t.ts,
       text: t.text,

@@ -6,10 +6,13 @@ import path from 'node:path';
 import {
   assembleMediaContext,
   dedupeTextEntries,
+  formatContextWindowLabel,
   formatDescriptionTxt,
   buildMetaJson,
   hasContextContent,
   writeMediaContextFiles,
+  DEFAULT_CONTEXT_MAX_MESSAGES,
+  DEFAULT_CONTEXT_MAX_MINUTES,
 } from '../src/media-context.js';
 
 const mediaTs = 1_700_000_000;
@@ -21,6 +24,15 @@ function texts(list) {
     ...t,
   }));
 }
+
+test('defaults are ±15 min / 5 per side', () => {
+  assert.equal(DEFAULT_CONTEXT_MAX_MESSAGES, 5);
+  assert.equal(DEFAULT_CONTEXT_MAX_MINUTES, 15);
+  assert.match(
+    formatContextWindowLabel(),
+    /±15 minutes · at most 5 texts before & 5 after/,
+  );
+});
 
 test('assembleMediaContext: caption + chronological before/after', () => {
   const ctx = assembleMediaContext({
@@ -38,11 +50,11 @@ test('assembleMediaContext: caption + chronological before/after', () => {
       { chatId: 'c1', sender: 'other', ts: mediaTs - 10, text: 'wrong sender' },
       { chatId: 'c2', sender: '+85291234567', ts: mediaTs - 10, text: 'wrong chat' },
     ]),
-    maxMessages: 15,
-    maxMinutes: 30,
   });
 
   assert.equal(ctx.caption, 'the photo');
+  assert.equal(ctx.maxMessages, 5);
+  assert.equal(ctx.maxMinutes, 15);
   assert.deepEqual(
     ctx.before.map((t) => t.text),
     ['older note', 'see this'],
@@ -66,24 +78,49 @@ test('assembleMediaContext: caption + chronological before/after', () => {
   assert.ok(!ctx.after.some((t) => t.messageId === 'media1'));
 });
 
-test('assembleMediaContext: respects 30-minute window', () => {
+test('assembleMediaContext: respects 15-minute window', () => {
   const ctx = assembleMediaContext({
     caption: null,
     chatId: 'c1',
     sender: '+85291234567',
     mediaTs,
     texts: texts([
-      { ts: mediaTs - 31 * 60, text: 'too old', messageId: 'old' },
+      { ts: mediaTs - 16 * 60, text: 'too old', messageId: 'old' },
       { ts: mediaTs - 60, text: 'in window', messageId: 'ok' },
-      { ts: mediaTs + 31 * 60, text: 'too late', messageId: 'late' },
+      { ts: mediaTs + 16 * 60, text: 'too late', messageId: 'late' },
+      { ts: mediaTs + 10 * 60, text: 'after ok', messageId: 'lateok' },
     ]),
   });
   assert.deepEqual(
     ctx.before.map((t) => t.text),
     ['in window'],
   );
-  assert.equal(ctx.after.length, 0);
+  assert.deepEqual(
+    ctx.after.map((t) => t.text),
+    ['after ok'],
+  );
   assert.equal(hasContextContent(ctx), true);
+});
+
+test('assembleMediaContext: still includes edge of ±15 minutes', () => {
+  const ctx = assembleMediaContext({
+    caption: null,
+    chatId: 'c1',
+    sender: '+85291234567',
+    mediaTs,
+    texts: texts([
+      { ts: mediaTs - 15 * 60, text: 'edge before', messageId: 'eb' },
+      { ts: mediaTs + 15 * 60, text: 'edge after', messageId: 'ea' },
+    ]),
+  });
+  assert.deepEqual(
+    ctx.before.map((t) => t.text),
+    ['edge before'],
+  );
+  assert.deepEqual(
+    ctx.after.map((t) => t.text),
+    ['edge after'],
+  );
 });
 
 test('assembleMediaContext: caps before/after at maxMessages (closest)', () => {
@@ -101,13 +138,47 @@ test('assembleMediaContext: caps before/after at maxMessages (closest)', () => {
     sender: '+85291234567',
     mediaTs,
     texts: texts(beforeMany),
-    maxMessages: 3,
-    maxMinutes: 30,
+    maxMessages: 5,
+    maxMinutes: 15,
   });
-  // Closest 3 priors, then chronological
+  // Closest 5 priors, then chronological
   assert.deepEqual(
     ctx.before.map((t) => t.text),
-    ['b3', 'b2', 'b1'],
+    ['b5', 'b4', 'b3', 'b2', 'b1'],
+  );
+});
+
+test('assembleMediaContext: default cap is 5 per side', () => {
+  const beforeMany = [];
+  const afterMany = [];
+  for (let i = 1; i <= 8; i++) {
+    beforeMany.push({
+      ts: mediaTs - i * 10,
+      text: `b${i}`,
+      messageId: `b${i}`,
+    });
+    afterMany.push({
+      ts: mediaTs + i * 10,
+      text: `a${i}`,
+      messageId: `a${i}`,
+    });
+  }
+  const ctx = assembleMediaContext({
+    caption: 'cap',
+    chatId: 'c1',
+    sender: '+85291234567',
+    mediaTs,
+    texts: texts([...beforeMany, ...afterMany]),
+  });
+  assert.equal(ctx.before.length, 5);
+  assert.equal(ctx.after.length, 5);
+  assert.deepEqual(
+    ctx.before.map((t) => t.text),
+    ['b5', 'b4', 'b3', 'b2', 'b1'],
+  );
+  assert.deepEqual(
+    ctx.after.map((t) => t.text),
+    ['a1', 'a2', 'a3', 'a4', 'a5'],
   );
 });
 
@@ -137,6 +208,7 @@ test('formatDescriptionTxt lists chronological roles with timestamps', () => {
     mediaFile: 'shot.jpg',
   });
   assert.match(txt, /Media file: shot\.jpg/);
+  assert.match(txt, /±15 minutes · at most 5 texts before & 5 after/);
   assert.match(txt, /\(before\) before note/);
   assert.match(txt, /\(caption\) shot/);
   assert.match(txt, /\(after\) after note/);
@@ -171,6 +243,8 @@ test('writeMediaContextFiles writes UTF-8 description.txt and meta.json', () => 
     assert.equal(meta.caption, '發票十月');
     assert.equal(meta.before[0].text, '請查收');
     assert.equal(meta.mediaFile, '發票十月.jpg');
+    assert.equal(meta.maxMessages, 5);
+    assert.equal(meta.maxMinutes, 15);
     const built = buildMetaJson(ctx, { mediaFile: 'x.jpg' });
     assert.equal(built.mediaFile, 'x.jpg');
   } finally {

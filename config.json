@@ -5,6 +5,8 @@
   "timezone": "Asia/Hong_Kong",
   "nearestTextMaxMessages": 15,
   "nearestTextMaxMinutes": 30,
+  "contextMaxMessages": 5,
+  "contextMaxMinutes": 15,
   "maxConcurrentDownloads": 2,
   "heartbeatPath": "data/heartbeat.json",
   "heartbeatStaleMs": 120000,

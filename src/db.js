@@ -158,11 +158,12 @@ export function listRecentTexts(db, { chatId, sender, beforeTs, limit = 30 }) {
 /**
  * Saved media in the same chat/sender whose timestamp is within
  * [aroundTs - windowSec, aroundTs] — used to refresh description.txt when
- * later same-sender text arrives (after-context).
+ * later same-sender text arrives (after-context). Default matches
+ * contextMaxMinutes (15).
  */
 export function listSavedMediaForContextRefresh(
   db,
-  { chatId, sender, aroundTs, windowSec = 30 * 60, limit = 20 },
+  { chatId, sender, aroundTs, windowSec = 15 * 60, limit = 20 },
 ) {
   return db
     .prepare(

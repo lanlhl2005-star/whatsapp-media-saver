@@ -10,8 +10,12 @@ const DEFAULTS = {
   authDir: 'auth',
   stateDb: 'data/state.sqlite',
   timezone: 'Asia/Hong_Kong',
+  // Filename nearest-text (locked plan §7 Q8)
   nearestTextMaxMessages: 15,
   nearestTextMaxMinutes: 30,
+  // description.txt / meta.json surrounding texts (per side: before & after)
+  contextMaxMessages: 5,
+  contextMaxMinutes: 15,
   maxConcurrentDownloads: 2,
   heartbeatPath: 'data/heartbeat.json',
   heartbeatStaleMs: 120_000,

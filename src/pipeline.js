@@ -106,13 +106,15 @@ export function createPipeline(ctx) {
 
   function mergeTextsForChat(chatId, senderKey, aroundTs) {
     const memTexts = textWindow.list(chatId);
+    const nearestCap = config.nearestTextMaxMessages || 15;
+    const contextCap = config.contextMaxMessages || 5;
     let dbTexts = [];
     try {
       dbTexts = listRecentTexts(db, {
         chatId,
         sender: senderKey,
         beforeTs: aroundTs,
-        limit: Math.max(40, (config.nearestTextMaxMessages || 15) * 3),
+        limit: Math.max(40, nearestCap * 3, contextCap * 4),
       });
     } catch {
       dbTexts = [];
@@ -140,8 +142,8 @@ export function createPipeline(ctx) {
         mediaTs,
         mediaMessageId,
         texts: merged,
-        maxMessages: config.nearestTextMaxMessages,
-        maxMinutes: config.nearestTextMaxMinutes,
+        maxMessages: config.contextMaxMessages,
+        maxMinutes: config.contextMaxMinutes,
       });
       if (!hasContextContent(ctx)) return null;
       return writeMediaContextFiles(absoluteFolder, ctx, {
@@ -164,7 +166,7 @@ export function createPipeline(ctx) {
    * saved media in the after-window (no re-download).
    */
   function refreshContextAfterText({ chatId, senderKey, textTs }) {
-    const windowSec = (config.nearestTextMaxMinutes || 30) * 60;
+    const windowSec = (config.contextMaxMinutes || 15) * 60;
     let rows = [];
     try {
       rows = listSavedMediaForContextRefresh(db, {
