@@ -84,11 +84,55 @@ export function extractPlainText(message) {
 }
 
 /**
- * Extract caption from a media content payload.
+ * Extract caption / title from a media content payload (image/video/document).
+ * Documents often carry `title` when `caption` is empty.
  */
 export function extractCaption(mediaContent) {
   if (!mediaContent || typeof mediaContent !== 'object') return null;
-  const cap = mediaContent.caption;
-  if (typeof cap === 'string' && cap.trim()) return cap.trim();
+  for (const key of ['caption', 'title']) {
+    const cap = mediaContent[key];
+    if (typeof cap === 'string' && cap.trim()) return cap.trim();
+  }
   return null;
+}
+
+/**
+ * Stem from an original WhatsApp fileName (sans directory / extension).
+ * Used when caption and nearest-text are missing (common for documents).
+ * @param {string|null|undefined} fileName
+ * @returns {string|null}
+ */
+export function stemFromOriginalFileName(fileName) {
+  if (!fileName) return null;
+  const base = String(fileName).split(/[\\/]/).pop() || '';
+  if (!base.trim()) return null;
+  const dot = base.lastIndexOf('.');
+  const stem = (dot > 0 ? base.slice(0, dot) : base).trim();
+  return stem || null;
+}
+
+/**
+ * Pick a file label: caption / nearest text, else original document/image fileName stem.
+ */
+export function resolveFileLabel({
+  caption,
+  chatId,
+  sender,
+  mediaTs,
+  texts,
+  maxMessages = 15,
+  maxMinutes = 30,
+  originalFileName,
+}) {
+  const fromText = resolveNearestText({
+    caption,
+    chatId,
+    sender,
+    mediaTs,
+    texts,
+    maxMessages,
+    maxMinutes,
+  });
+  if (fromText) return fromText;
+  return stemFromOriginalFileName(originalFileName);
 }

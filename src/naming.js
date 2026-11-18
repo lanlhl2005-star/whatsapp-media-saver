@@ -58,24 +58,100 @@ export function sanitizeGroupName(name) {
   return cleaned || 'unknown-group';
 }
 
+/** True for WhatsApp LID / hosted.lid JIDs (internal ids, not phone numbers). */
+export function isLidJid(raw) {
+  if (!raw) return false;
+  const s = String(raw).trim().toLowerCase();
+  return s.endsWith('@lid') || s.endsWith('@hosted.lid');
+}
+
+/** True for phone-number user JIDs. */
+export function isPhoneJid(raw) {
+  if (!raw) return false;
+  const s = String(raw).trim().toLowerCase();
+  return s.endsWith('@s.whatsapp.net') || s.endsWith('@c.us') || s.endsWith('@hosted');
+}
+
 /**
- * Normalize a phone/JID fragment to +E164 digits when possible.
+ * User part of a JID (before @), without device/agent suffix.
+ * @param {string|null|undefined} raw
+ */
+export function jidUserPart(raw) {
+  if (!raw) return '';
+  let s = String(raw).trim();
+  if (s.includes('@')) s = s.split('@')[0];
+  if (s.includes(':')) s = s.split(':')[0];
+  if (s.includes('_')) s = s.split('_')[0];
+  return s;
+}
+
+/**
+ * Folder / DB sender segment from a JID or phone.
+ * Phone JIDs → +E164. LID JIDs → lid_<id> (never +<lidDigits>).
+ * @param {string|null|undefined} raw
+ */
+export function folderSenderSegment(raw) {
+  if (!raw) return 'unknown';
+  const original = String(raw).trim();
+  if (!original) return 'unknown';
+
+  // Already a lid_ fallback or unknown
+  if (/^lid_/i.test(original)) {
+    const cleaned = sanitizeStem(original, { maxLength: 48 });
+    return cleaned || 'unknown';
+  }
+  if (/^unknown$/i.test(original)) return 'unknown';
+
+  if (isLidJid(original)) {
+    const user = jidUserPart(original);
+    const digits = user.replace(/\D/g, '');
+    const id = digits || sanitizeStem(user, { maxLength: 40 });
+    return id ? `lid_${id}` : 'unknown';
+  }
+
+  // Domain present but not a phone JID — do not pretend digits are E.164
+  if (original.includes('@')) {
+    const server = original.split('@')[1]?.toLowerCase() || '';
+    if (server === 'lid' || server.endsWith('.lid')) {
+      const user = jidUserPart(original);
+      const digits = user.replace(/\D/g, '');
+      const id = digits || sanitizeStem(user, { maxLength: 40 });
+      return id ? `lid_${id}` : 'unknown';
+    }
+    if (
+      server === 's.whatsapp.net' ||
+      server === 'c.us' ||
+      server === 'hosted'
+    ) {
+      const digits = jidUserPart(original).replace(/\D/g, '');
+      return digits ? `+${digits}` : 'unknown';
+    }
+    const user = jidUserPart(original);
+    const slug = sanitizeStem(user, { maxLength: 40 });
+    return slug ? `jid_${slug}` : 'unknown';
+  }
+
+  // Bare +E164 / digits (caller already resolved phone)
+  const digits = original.replace(/\D/g, '');
+  if (digits && /^\+?\d[\d\s\-().]*$/.test(original)) {
+    return `+${digits}`;
+  }
+  if (!digits) {
+    const slug = sanitizeStem(original, { maxLength: 40 });
+    return slug ? `jid_${slug}` : 'unknown';
+  }
+  // Non-phone opaque token with digits — keep as jid_ slug, not +digits
+  const slug = sanitizeStem(original, { maxLength: 40 });
+  return slug ? `jid_${slug}` : 'unknown';
+}
+
+/**
+ * Normalize a phone/JID fragment for folder names.
+ * Phone → +E164. LID → lid_<id>. Never formats a raw LID as +digits.
  * @param {string|null|undefined} raw
  */
 export function normalizePhone(raw) {
-  if (!raw) return 'unknown';
-  let s = String(raw).trim();
-  // Strip WhatsApp JID domain
-  if (s.includes('@')) s = s.split('@')[0];
-  // Device / agent suffixes like 123:45 or LID
-  if (s.includes(':')) s = s.split(':')[0];
-  if (/^lid$/i.test(s) || !s) return 'unknown';
-  const digits = s.replace(/\D/g, '');
-  if (!digits) {
-    const slug = sanitizeStem(s, { maxLength: 40 });
-    return slug ? `jid_${slug}` : 'unknown';
-  }
-  return `+${digits}`;
+  return folderSenderSegment(raw);
 }
 
 /**

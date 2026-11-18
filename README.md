@@ -162,7 +162,8 @@ F:\Scan\whatsapp media\
 ```
 
 - Folder timestamp = message send time in **GMT+0800** (`Asia/Hong_Kong`), not PC local TZ.
-- File name = **caption**, else nearest same-sender text within **15 messages or 30 minutes**; sanitized; original extension kept; collisions → `name__2.ext`.
+- Folder sender = real phone (`+852…`) from `@s.whatsapp.net` / `senderPn` / `participantPn` when available; unresolved WhatsApp LID → `lid_<id>` (never `+<lidDigits>`).
+- File name = **caption** (or document title), else nearest same-sender text within **15 messages or 30 minutes**, else original `fileName` stem; sanitized; original extension kept; collisions → `name__2.ext`.
 
 ## State & secrets
 

@@ -11,9 +11,12 @@ import {
   getMeta,
 } from './db.js';
 import { classifyMessage, shouldSaveMediaKind } from './media-types.js';
-import { extractCaption, extractPlainText, resolveNearestText } from './nearest-text.js';
 import {
-  normalizePhone,
+  extractCaption,
+  extractPlainText,
+  resolveFileLabel,
+} from './nearest-text.js';
+import {
   nextAvailableFileName,
   buildFileStem,
   extensionFromMeta,
@@ -22,6 +25,13 @@ import { resolveDestination } from './paths.js';
 import { downloadToFile } from './session.js';
 import { createDownloadQueue } from './download-queue.js';
 import { touchHeartbeat } from './heartbeat.js';
+import {
+  createLidPhoneCache,
+  jidIsGroup,
+  pickPreferredSenderJid,
+  resolveFolderSender,
+  textCacheSenderKey,
+} from './sender.js';
 
 /**
  * In-memory ring of recent texts (also persisted to SQLite).
@@ -41,18 +51,6 @@ function createTextWindow(maxPerChat = 200) {
       return byChat.get(chatId) || [];
     },
   };
-}
-
-function jidIsGroup(jid) {
-  return typeof jid === 'string' && jid.endsWith('@g.us');
-}
-
-function senderFromMessage(msg) {
-  const key = msg.key || {};
-  if (jidIsGroup(key.remoteJid)) {
-    return key.participant || msg.participant || key.remoteJid;
-  }
-  return key.remoteJid;
 }
 
 function messageTs(msg) {
@@ -79,6 +77,7 @@ export function createPipeline(ctx) {
     logger,
   });
   const textWindow = createTextWindow();
+  const lidPhoneCache = createLidPhoneCache();
   /** @type {Map<string, string>} chatJid -> group subject */
   const groupNames = new Map();
   let catchingUp = false;
@@ -99,7 +98,7 @@ export function createPipeline(ctx) {
     }
   }
 
-  function rememberText(msg) {
+  async function rememberText(msg) {
     const key = msg.key || {};
     if (key.fromMe) return;
     const classified = classifyMessage(msg.message);
@@ -107,13 +106,17 @@ export function createPipeline(ctx) {
     if (classified.kind === 'text') {
       text = extractPlainText(classified.content);
     } else if (classified.content) {
-      // Also keep captions as naming context for later media from same sender
+      // Captions / document titles as naming context for later media from same sender
       text = extractCaption(classified.content);
     }
     if (!text) return;
 
     const chatId = key.remoteJid;
-    const sender = senderFromMessage(msg);
+    const resolved = await resolveFolderSender(msg, sock, lidPhoneCache);
+    const sender = textCacheSenderKey(
+      resolved.folderSender,
+      resolved.senderJid || pickPreferredSenderJid(msg),
+    );
     const ts = messageTs(msg);
     const entry = { chatId, sender, ts, text, messageId: key.id };
     textWindow.push(entry);
@@ -130,7 +133,7 @@ export function createPipeline(ctx) {
     if (!msg.message) return;
 
     const classified = classifyMessage(msg.message);
-    rememberText(msg);
+    await rememberText(msg);
 
     if (!shouldSaveMediaKind(classified.kind, config.mediaTypes)) {
       if (['audio', 'sticker', 'ptt'].includes(classified.kind)) {
@@ -149,9 +152,15 @@ export function createPipeline(ctx) {
 
     const chatId = key.remoteJid;
     const isGroup = jidIsGroup(chatId);
-    const senderJid = senderFromMessage(msg);
-    const senderPhone = normalizePhone(senderJid);
+    const resolved = await resolveFolderSender(msg, sock, lidPhoneCache);
+    const senderPhone = resolved.folderSender;
+    const senderKey = textCacheSenderKey(
+      senderPhone,
+      resolved.senderJid || pickPreferredSenderJid(msg),
+    );
     const ts = messageTs(msg);
+    const originalFileName =
+      classified.content?.fileName || classified.content?.filename || null;
     const caption = extractCaption(classified.content);
     const shortId = (key.id || 'unknown').slice(-8);
 
@@ -160,7 +169,7 @@ export function createPipeline(ctx) {
     try {
       dbTexts = listRecentTexts(db, {
         chatId,
-        sender: senderJid,
+        sender: senderKey,
         beforeTs: ts,
         limit: config.nearestTextMaxMessages * 2,
       });
@@ -168,14 +177,15 @@ export function createPipeline(ctx) {
       dbTexts = [];
     }
     const merged = [...dbTexts, ...memTexts];
-    const fileLabel = resolveNearestText({
+    const fileLabel = resolveFileLabel({
       caption,
       chatId,
-      sender: senderJid,
+      sender: senderKey,
       mediaTs: ts,
       texts: merged,
       maxMessages: config.nearestTextMaxMessages,
       maxMinutes: config.nearestTextMaxMinutes,
+      originalFileName,
     });
 
     const groupName = isGroup ? await refreshGroupName(chatId) : null;
@@ -188,7 +198,7 @@ export function createPipeline(ctx) {
       fileLabel,
       shortMsgId: shortId,
       mimetype: classified.content?.mimetype,
-      originalFileName: classified.content?.fileName || classified.content?.filename,
+      originalFileName,
       mediaType: classified.kind,
       timeZone: config.timezone,
     });
@@ -198,7 +208,7 @@ export function createPipeline(ctx) {
       remote_jid: chatId,
       message_id: key.id,
       from_me: false,
-      participant: key.participant || null,
+      participant: key.participant || key.participantPn || null,
       sender: senderPhone,
       ts,
       media_type: classified.kind,
@@ -221,7 +231,7 @@ export function createPipeline(ctx) {
           const stem = buildFileStem(fileLabel, shortId);
           const ext = extensionFromMeta({
             mimetype: classified.content?.mimetype,
-            fileName: classified.content?.fileName || classified.content?.filename,
+            fileName: originalFileName,
             mediaType: classified.kind,
           });
           const name = nextAvailableFileName(stem, ext, (n) =>
@@ -236,7 +246,7 @@ export function createPipeline(ctx) {
           remote_jid: chatId,
           message_id: key.id,
           from_me: false,
-          participant: key.participant || null,
+          participant: key.participant || key.participantPn || null,
           sender: senderPhone,
           ts,
           media_type: classified.kind,
@@ -247,7 +257,12 @@ export function createPipeline(ctx) {
           retry_count: existing?.retry_count || 0,
         });
         logger.info(
-          { file: relativeFile, type: classified.kind, sender: senderPhone },
+          {
+            file: relativeFile,
+            type: classified.kind,
+            sender: senderPhone,
+            lid: resolved.lidJid || undefined,
+          },
           'saved media',
         );
         setMeta(db, 'last_saved_ts', String(ts));
@@ -264,7 +279,7 @@ export function createPipeline(ctx) {
           remote_jid: chatId,
           message_id: key.id,
           from_me: false,
-          participant: key.participant || null,
+          participant: key.participant || key.participantPn || null,
           sender: senderPhone,
           ts,
           media_type: classified.kind,
@@ -325,6 +340,16 @@ export function createPipeline(ctx) {
         if (u.id && u.subject) groupNames.set(u.id, u.subject);
       }
     });
+    // LID ↔ phone mappings (Baileys 6.7.22+)
+    sock.ev.on('chats.phoneNumberShare', (ev) => {
+      if (ev?.lid && ev?.jid) lidPhoneCache.remember(ev.lid, ev.jid);
+    });
+    sock.ev.on('contacts.upsert', (contacts) => {
+      for (const c of contacts || []) lidPhoneCache.rememberContact(c);
+    });
+    sock.ev.on('contacts.update', (contacts) => {
+      for (const c of contacts || []) lidPhoneCache.rememberContact(c);
+    });
   }
 
   return {
@@ -332,5 +357,6 @@ export function createPipeline(ctx) {
     catchUp,
     handleIncomingMedia,
     queue,
+    lidPhoneCache,
   };
 }

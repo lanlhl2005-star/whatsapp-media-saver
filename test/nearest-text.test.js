@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   resolveNearestText,
+  resolveFileLabel,
   extractPlainText,
   extractCaption,
+  stemFromOriginalFileName,
 } from '../src/nearest-text.js';
 
 test('caption wins over nearest text', () => {
@@ -82,5 +84,39 @@ test('extractPlainText and caption', () => {
     'hello',
   );
   assert.equal(extractCaption({ caption: ' shot ' }), 'shot');
+  assert.equal(extractCaption({ title: ' Invoice Q4 ' }), 'Invoice Q4');
   assert.equal(extractCaption({}), null);
+});
+
+test('stemFromOriginalFileName strips extension', () => {
+  assert.equal(stemFromOriginalFileName('Report Final.PDF'), 'Report Final');
+  assert.equal(stemFromOriginalFileName('a/b/c.docx'), 'c');
+  assert.equal(stemFromOriginalFileName(''), null);
+});
+
+test('resolveFileLabel falls back to document fileName when no caption/text', () => {
+  assert.equal(
+    resolveFileLabel({
+      caption: null,
+      chatId: 'c1',
+      sender: '+85291234567',
+      mediaTs: 1000,
+      texts: [],
+      originalFileName: 'media-2EB22D60.pdf',
+    }),
+    'media-2EB22D60',
+  );
+  assert.equal(
+    resolveFileLabel({
+      caption: null,
+      chatId: 'c1',
+      sender: '+85291234567',
+      mediaTs: 1000,
+      texts: [
+        { chatId: 'c1', sender: '+85291234567', ts: 990, text: '請查收 PDF' },
+      ],
+      originalFileName: 'media-2EB22D60.pdf',
+    }),
+    '請查收 PDF',
+  );
 });

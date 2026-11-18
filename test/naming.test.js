@@ -4,6 +4,9 @@ import {
   sanitizeStem,
   sanitizeGroupName,
   normalizePhone,
+  folderSenderSegment,
+  isLidJid,
+  isPhoneJid,
   formatFolderTimestamp,
   buildPerMediaFolderName,
   extensionFromMeta,
@@ -24,11 +27,32 @@ test('sanitizeGroupName falls back', () => {
   assert.equal(sanitizeGroupName(':::'), 'unknown-group');
 });
 
-test('normalizePhone to +E164', () => {
+test('normalizePhone / folderSenderSegment phone vs LID', () => {
   assert.equal(normalizePhone('85291234567@s.whatsapp.net'), '+85291234567');
   assert.equal(normalizePhone('+1 (415) 555-2671'), '+14155552671');
   assert.equal(normalizePhone('12345:99@s.whatsapp.net'), '+12345');
   assert.equal(normalizePhone(null), 'unknown');
+  // LID must never become +digits pretending to be E.164
+  assert.equal(
+    folderSenderSegment('157161527226406@lid'),
+    'lid_157161527226406',
+  );
+  assert.equal(
+    normalizePhone('157161527226406@lid'),
+    'lid_157161527226406',
+  );
+  assert.equal(folderSenderSegment('999@hosted.lid'), 'lid_999');
+  assert.equal(isLidJid('157161527226406@lid'), true);
+  assert.equal(isPhoneJid('85291234567@s.whatsapp.net'), true);
+  assert.equal(isPhoneJid('157161527226406@lid'), false);
+});
+
+test('buildPerMediaFolderName uses lid_ fallback for LID JID', () => {
+  const utc = Date.UTC(2026, 10, 18, 2, 6, 15); // 10:06:15 HKT
+  assert.equal(
+    buildPerMediaFolderName(utc, '157161527226406@lid'),
+    '2026-11-18_10-06-15_lid_157161527226406',
+  );
 });
 
 test('formatFolderTimestamp always Asia/Hong_Kong', () => {
