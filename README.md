@@ -150,6 +150,8 @@ Keep a user session available on the always-on machine (interactive logon task).
 F:\Scan\whatsapp media\
   2026-11-17_14-03-22_+85291234567\
     invoice-october.pdf
+    description.txt
+    meta.json
 ```
 
 **Group chat** (covering folder = group subject)
@@ -159,11 +161,14 @@ F:\Scan\whatsapp media\
   Project-Alpha\
     2026-11-17_14-05-01_+85291234567\
       family-dinner.jpg
+      description.txt
+      meta.json
 ```
 
 - Folder timestamp = message send time in **GMT+0800** (`Asia/Hong_Kong`), not PC local TZ.
 - Folder sender = real phone (`+852…`) from `@s.whatsapp.net` / `senderPn` / `participantPn` when available; unresolved WhatsApp LID → `lid_<id>` (never `+<lidDigits>`).
 - File name = **caption** (or document title), else nearest same-sender text within **15 messages or 30 minutes**, else original `fileName` stem; sanitized; original extension kept; collisions → `name__2.ext`.
+- **`description.txt`** (UTF-8, open in Explorer) lists the media **caption** plus same-sender texts in the same chat **before and after** the media (same **15 messages / 30 minutes** window), chronological with timestamps. **`meta.json`** stores the same data structured. Written on save; refreshed if later same-sender text arrives in the after-window. Older folders are **not** backfilled.
 
 ## State & secrets
 
@@ -190,7 +195,7 @@ F:\Scan\whatsapp media\
 npm test
 ```
 
-Unit tests cover sanitize/naming, nearest-text, and media-type classification (no live WhatsApp).
+Unit tests cover sanitize/naming, nearest-text, media context assembly, and media-type classification (no live WhatsApp).
 
 ### Project layout
 
@@ -203,7 +208,9 @@ whatsapp-media-saver/
     pipeline.js       # ingest → name → save → SQLite
     naming.js
     nearest-text.js
+    media-context.js  # caption + before/after → description.txt / meta.json
     media-types.js
+    sender.js
     db.js
     ...
   scripts/

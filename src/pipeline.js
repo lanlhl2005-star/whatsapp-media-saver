@@ -6,6 +6,7 @@ import {
   upsertProcessed,
   insertTextCache,
   listRecentTexts,
+  listSavedMediaForContextRefresh,
   pruneTextCache,
   setMeta,
   getMeta,
@@ -16,6 +17,11 @@ import {
   extractPlainText,
   resolveFileLabel,
 } from './nearest-text.js';
+import {
+  assembleMediaContext,
+  hasContextContent,
+  writeMediaContextFiles,
+} from './media-context.js';
 import {
   nextAvailableFileName,
   buildFileStem,
@@ -98,13 +104,135 @@ export function createPipeline(ctx) {
     }
   }
 
+  function mergeTextsForChat(chatId, senderKey, aroundTs) {
+    const memTexts = textWindow.list(chatId);
+    let dbTexts = [];
+    try {
+      dbTexts = listRecentTexts(db, {
+        chatId,
+        sender: senderKey,
+        beforeTs: aroundTs,
+        limit: Math.max(40, (config.nearestTextMaxMessages || 15) * 3),
+      });
+    } catch {
+      dbTexts = [];
+    }
+    return [...dbTexts, ...memTexts];
+  }
+
+  function persistMediaContext({
+    absoluteFolder,
+    relativeDir,
+    mediaFileName,
+    mediaType,
+    caption,
+    chatId,
+    senderKey,
+    mediaTs,
+    mediaMessageId,
+  }) {
+    try {
+      const merged = mergeTextsForChat(chatId, senderKey, mediaTs);
+      const ctx = assembleMediaContext({
+        caption,
+        chatId,
+        sender: senderKey,
+        mediaTs,
+        mediaMessageId,
+        texts: merged,
+        maxMessages: config.nearestTextMaxMessages,
+        maxMinutes: config.nearestTextMaxMinutes,
+      });
+      if (!hasContextContent(ctx)) return null;
+      return writeMediaContextFiles(absoluteFolder, ctx, {
+        timeZone: config.timezone,
+        mediaFile: mediaFileName || null,
+        mediaType: mediaType || null,
+        folderPath: relativeDir || null,
+      });
+    } catch (err) {
+      logger.warn(
+        { err: err?.message, folder: absoluteFolder },
+        'media context write failed',
+      );
+      return null;
+    }
+  }
+
+  /**
+   * When later same-sender text arrives, refresh description.txt for recent
+   * saved media in the after-window (no re-download).
+   */
+  function refreshContextAfterText({ chatId, senderKey, textTs }) {
+    const windowSec = (config.nearestTextMaxMinutes || 30) * 60;
+    let rows = [];
+    try {
+      rows = listSavedMediaForContextRefresh(db, {
+        chatId,
+        sender: senderKey,
+        aroundTs: textTs,
+        windowSec,
+        limit: 20,
+      });
+    } catch (err) {
+      logger.warn({ err: err?.message }, 'context refresh query failed');
+      return;
+    }
+    for (const row of rows) {
+      if (!row.folder_path || !Number.isFinite(row.ts)) continue;
+      // Only media strictly before this text (after-context)
+      if (row.ts >= textTs) continue;
+      const absoluteFolder = path.join(saveRoot, row.folder_path);
+      const mediaFileName = row.file_path
+        ? path.basename(row.file_path)
+        : null;
+      // Prefer caption already written in meta.json; fall back to text-cache own msg
+      let caption = null;
+      try {
+        const metaPath = path.join(absoluteFolder, 'meta.json');
+        if (fs.existsSync(metaPath)) {
+          const prev = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+          if (typeof prev?.caption === 'string' && prev.caption.trim()) {
+            caption = prev.caption.trim();
+          }
+        }
+      } catch {
+        /* ignore corrupt meta */
+      }
+      if (!caption) {
+        try {
+          const around = mergeTextsForChat(chatId, senderKey, row.ts);
+          const own = around.find(
+            (t) => t.messageId && t.messageId === row.message_id,
+          );
+          if (own?.text) caption = own.text;
+        } catch {
+          /* ignore */
+        }
+      }
+      persistMediaContext({
+        absoluteFolder,
+        relativeDir: row.folder_path,
+        mediaFileName,
+        mediaType: row.media_type,
+        caption,
+        chatId,
+        senderKey,
+        mediaTs: row.ts,
+        mediaMessageId: row.message_id,
+      });
+    }
+  }
+
   async function rememberText(msg) {
     const key = msg.key || {};
     if (key.fromMe) return;
     const classified = classifyMessage(msg.message);
     let text = null;
+    let isPlainText = false;
     if (classified.kind === 'text') {
       text = extractPlainText(classified.content);
+      isPlainText = Boolean(text);
     } else if (classified.content) {
       // Captions / document titles as naming context for later media from same sender
       text = extractCaption(classified.content);
@@ -124,6 +252,11 @@ export function createPipeline(ctx) {
       insertTextCache(db, entry);
     } catch (err) {
       logger.warn({ err: err.message }, 'text cache insert failed');
+    }
+
+    // Plain text after a recent media save → refresh that folder's description
+    if (isPlainText) {
+      refreshContextAfterText({ chatId, senderKey: sender, textTs: ts });
     }
   }
 
@@ -164,19 +297,7 @@ export function createPipeline(ctx) {
     const caption = extractCaption(classified.content);
     const shortId = (key.id || 'unknown').slice(-8);
 
-    const memTexts = textWindow.list(chatId);
-    let dbTexts = [];
-    try {
-      dbTexts = listRecentTexts(db, {
-        chatId,
-        sender: senderKey,
-        beforeTs: ts,
-        limit: config.nearestTextMaxMessages * 2,
-      });
-    } catch {
-      dbTexts = [];
-    }
-    const merged = [...dbTexts, ...memTexts];
+    const merged = mergeTextsForChat(chatId, senderKey, ts);
     const fileLabel = resolveFileLabel({
       caption,
       chatId,
@@ -241,6 +362,7 @@ export function createPipeline(ctx) {
         }
         fs.renameSync(tmpPath, finalAbs);
         const relativeFile = path.relative(saveRoot, finalAbs);
+        const relativeDir = path.relative(saveRoot, path.dirname(finalAbs));
         upsertProcessed(db, {
           msg_key: msgKey,
           remote_jid: chatId,
@@ -250,11 +372,23 @@ export function createPipeline(ctx) {
           sender: senderPhone,
           ts,
           media_type: classified.kind,
-          folder_path: path.relative(saveRoot, path.dirname(finalAbs)),
+          folder_path: relativeDir,
           file_path: relativeFile,
           status: 'saved',
           error: null,
           retry_count: existing?.retry_count || 0,
+        });
+        // Caption + same-sender before/after texts beside the media (Explorer-friendly)
+        persistMediaContext({
+          absoluteFolder: path.dirname(finalAbs),
+          relativeDir,
+          mediaFileName: path.basename(finalAbs),
+          mediaType: classified.kind,
+          caption,
+          chatId,
+          senderKey,
+          mediaTs: ts,
+          mediaMessageId: key.id,
         });
         logger.info(
           {

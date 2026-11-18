@@ -155,6 +155,28 @@ export function listRecentTexts(db, { chatId, sender, beforeTs, limit = 30 }) {
     .all(chatId, sender, beforeTs - 2 * 60 * 60, beforeTs + 2 * 60 * 60, limit);
 }
 
+/**
+ * Saved media in the same chat/sender whose timestamp is within
+ * [aroundTs - windowSec, aroundTs] — used to refresh description.txt when
+ * later same-sender text arrives (after-context).
+ */
+export function listSavedMediaForContextRefresh(
+  db,
+  { chatId, sender, aroundTs, windowSec = 30 * 60, limit = 20 },
+) {
+  return db
+    .prepare(
+      `SELECT msg_key, remote_jid, message_id, sender, ts, media_type,
+              folder_path, file_path, status
+       FROM processed_messages
+       WHERE remote_jid = ? AND sender = ? AND status = 'saved'
+         AND ts >= ? AND ts <= ?
+       ORDER BY ts DESC
+       LIMIT ?`,
+    )
+    .all(chatId, sender, aroundTs - windowSec, aroundTs, limit);
+}
+
 /** Prune text cache older than retentionSeconds. */
 export function pruneTextCache(db, retentionSeconds = 7 * 24 * 3600) {
   const cutoff = Math.floor(Date.now() / 1000) - retentionSeconds;
